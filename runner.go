@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/robfig/cron"
+	"github.com/robfig/cron/v3"
 	"log"
 	"os/exec"
 )
@@ -18,9 +18,9 @@ func NewRunner() *Runner {
 }
 
 func (r *Runner) Add(spec string, cmd string) error {
-	err := r.cron.AddFunc(spec, r.cmdFunc(cmd))
+	entryID, err := r.cron.AddFunc(spec, r.cmdFunc(cmd))
 
-	log.Printf("Add cron job spec:%v cmd:%v err:%v", spec, cmd, err)
+	log.Printf("Add cron job spec:%v cmd:%v entryID: %v err:%v", spec, cmd, entryID, err)
 
 	return err
 }
