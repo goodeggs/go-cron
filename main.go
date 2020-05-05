@@ -1,13 +1,18 @@
 package main
 
 import (
-	"github.com/namsral/flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"runtime"
 	"sync"
 	"syscall"
+	"time"
+
+	"github.com/bep/debounce"
+	"github.com/fsnotify/fsnotify"
+	"github.com/namsral/flag"
 )
 
 var (
@@ -20,45 +25,90 @@ func init() {
 	flag.IntVar(&numCPU, "cpu", runtime.NumCPU(), "maximum number of CPUs")
 }
 
+func reload() (*Runner, error) {
+	file, err := os.Open(crontabPath)
+	if err != nil {
+		return nil, fmt.Errorf("crontab path:%v err:%v", crontabPath, err)
+	}
+
+	parser, err := NewParser(file)
+	if err != nil {
+		return nil, fmt.Errorf("Parser read err:%v", err)
+	}
+
+	runner, err := parser.Parse()
+	if err != nil {
+		return nil, fmt.Errorf("Parser parse err:%v", err)
+	}
+
+	file.Close()
+
+	return runner, nil
+}
+
 func main() {
 	flag.Parse()
 
 	runtime.GOMAXPROCS(numCPU)
 
-	file, err := os.Open(crontabPath)
+	runner, err := reload()
 	if err != nil {
-		log.Fatalf("crontab path:%v err:%v", crontabPath, err)
+		log.Fatal(err)
 	}
 
-	parser, err := NewParser(file)
+	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Fatalf("Parser read err:%v", err)
+		log.Fatalf("Watcher err:%v", err)
 	}
 
-	runner, err := parser.Parse()
-	if err != nil {
-		log.Fatalf("Parser parse err:%v", err)
-	}
-
-	file.Close()
+	debounced := debounce.New(100 * time.Millisecond)
 
 	var wg sync.WaitGroup
-	shutdown(runner, &wg)
+
+	c := make(chan os.Signal, 2)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		for {
+			select {
+
+			case _, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				log.Println("Crontab changed, reloading...")
+				debounced(func() {
+					newRunner, err := reload()
+					if err != nil {
+						log.Printf("Error on reload, ignoring (no changes were applied): %v", err)
+						return
+					}
+					newRunner.Start()
+					runner.Stop()
+					runner = newRunner
+				})
+
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Fatalf("Watcher err:%v", err)
+
+			case sig := <-c:
+				log.Println("Got signal: ", sig)
+				watcher.Close()
+				runner.Stop()
+				wg.Done()
+			}
+		}
+	}()
 
 	runner.Start()
 	wg.Add(1)
 
+	if err := watcher.Add(crontabPath); err != nil {
+		log.Fatalf("Watcher err:%v", err)
+	}
+
 	wg.Wait()
 	log.Println("End cron")
-}
-
-func shutdown(runner *Runner, wg *sync.WaitGroup) {
-	c := make(chan os.Signal, 2)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		s := <-c
-		log.Println("Got signal: ", s)
-		runner.Stop()
-		wg.Done()
-	}()
 }
