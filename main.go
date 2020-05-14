@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"syscall"
@@ -61,7 +62,7 @@ func main() {
 		log.Fatalf("Watcher err:%v", err)
 	}
 
-	debounced := debounce.New(100 * time.Millisecond)
+	debounced := debounce.New(10 * time.Second)
 
 	var wg sync.WaitGroup
 
@@ -71,9 +72,12 @@ func main() {
 		for {
 			select {
 
-			case _, ok := <-watcher.Events:
+			case evt, ok := <-watcher.Events:
 				if !ok {
-					return
+					continue
+				}
+				if evt.Name != filepath.Base(crontabPath) {
+					continue
 				}
 				log.Println("Crontab changed, reloading...")
 				debounced(func() {
@@ -89,7 +93,7 @@ func main() {
 
 			case err, ok := <-watcher.Errors:
 				if !ok {
-					return
+					continue
 				}
 				log.Fatalf("Watcher err:%v", err)
 
@@ -105,7 +109,7 @@ func main() {
 	runner.Start()
 	wg.Add(1)
 
-	if err := watcher.Add(crontabPath); err != nil {
+	if err := watcher.Add(filepath.Dir(crontabPath)); err != nil {
 		log.Fatalf("Watcher err:%v", err)
 	}
 
