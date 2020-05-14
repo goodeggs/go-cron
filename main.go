@@ -76,7 +76,9 @@ func main() {
 				if !ok {
 					continue
 				}
-				if evt.Name != filepath.Base(crontabPath) {
+				// we're watching one directory for one file; this simplification solves
+				// all kinds of weird filesystem/os complexity.
+				if filepath.Base(evt.Name) != filepath.Base(crontabPath) {
 					continue
 				}
 				log.Println("Crontab changed, reloading...")
